@@ -14,7 +14,7 @@ The two services communicate via:
 - **HTTP/REST + JSON** for control (`:9100`)
 - **Raw TCP, length-prefixed binary frames** for the dump data plane (`:9101`)
 
-No gRPC, no protobuf — stdlib + `golang.org/x/sys/unix` only.
+stdlib + `golang.org/x/sys/unix` only
 
 ## Status
 

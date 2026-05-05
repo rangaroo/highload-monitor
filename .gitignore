@@ -19,3 +19,6 @@ coverage.txt
 
 # Local config overrides
 *.local.yaml
+
+# Claude Code local state (per-machine)
+.claude/
