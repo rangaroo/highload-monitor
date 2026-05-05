@@ -1,0 +1,21 @@
+# Built binaries
+/bin/
+/pf
+/analyzer
+
+# Go test/coverage artifacts
+*.test
+*.out
+coverage.txt
+
+# IDE / editor
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+
+# Local config overrides
+*.local.yaml
