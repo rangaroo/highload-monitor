@@ -141,6 +141,12 @@ func (r *RXRing) Stats() (Stats, error) {
 // FD returns the raw socket file descriptor, needed for poll(2).
 func (r *RXRing) FD() int { return r.fd }
 
+// BlockSize returns the configured block size in bytes.
+func (r *RXRing) BlockSize() int { return r.cfg.BlockSize }
+
+// BlockCount returns the number of blocks in the ring.
+func (r *RXRing) BlockCount() int { return r.cfg.BlockCount }
+
 // applyDefaults fills in zero Config fields with the package defaults.
 func applyDefaults(cfg Config) Config {
 	if cfg.BlockSize == 0 {
