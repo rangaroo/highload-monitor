@@ -2,16 +2,23 @@ package afpacket
 
 // Kernel constants from <linux/if_packet.h> not exposed by golang.org/x/sys/unix.
 const (
-	tpacketV3 = 3 // TPACKET_V3 — block-based RX ring
+	// tpacket version enum (TPACKET_V1=0, TPACKET_V2=1, TPACKET_V3=2)
+	tpacketV2 = 1 // frame-based TX ring
+	tpacketV3 = 2 // block-based RX ring
 
-	// Block status bits written by the kernel into BlockHeader.Status.
-	tpStatusKernel = 0      // kernel owns the block; do not read
-	tpStatusUser   = 1 << 0 // user owns the block; safe to read
+	// RX block status bits (BlockHeader.Status)
+	tpStatusKernel = 0      // kernel owns block
+	tpStatusUser   = 1 << 0 // userspace owns block, safe to read
 
-	// PACKET_FANOUT subtypes — how the kernel distributes packets across sockets
-	// that share the same fanout group ID.
-	packetFanoutHash = 0 // symmetric 5-tuple hash (same flow always hits same socket)
-	packetFanoutLB   = 1 // round-robin load balance
+	// TX frame status bits (TXFrameHeader.Status)
+	tpStatusAvailable   = 0 // slot free, kernel owns
+	tpStatusSendRequest = 1 // userspace filled, ready to send
+	tpStatusSending     = 2 // kernel currently transmitting
+	tpStatusWrongFormat = 4 // kernel rejected frame (bad length etc.)
+
+	// PACKET_FANOUT subtypes
+	packetFanoutHash = 0 // symmetric 5-tuple hash
+	packetFanoutLB   = 1 // round-robin
 )
 
 // Default ring geometry. Changing these is the primary lever for tuning
@@ -99,4 +106,48 @@ type RXRing struct {
 	blocks [][]byte // per-block sub-slices into mmap for fast indexing
 	cfg    Config   // resolved configuration (defaults filled in)
 	cur    int      // index of the next block to read (wraps at blockCount)
+}
+
+// TX ring geometry defaults.
+// frameSize must be >= TPACKET2_HDRLEN + max frame bytes, aligned to 16.
+// blockSize must be a page multiple; blockSize = frameSize * framesPerBlock.
+const (
+	defaultTXFrameSize  = 2048 // covers 1500-byte MTU + tpacket2_hdr overhead
+	defaultTXFrameCount = 256  // 512 KiB total TX ring
+	defaultTXBlockSize  = 4096 // one page per block (2 frames per block)
+)
+
+// TXConfig holds parameters for opening a TPACKET_V2 TX ring.
+type TXConfig struct {
+	Interface  string
+	FrameSize  int // default: defaultTXFrameSize
+	FrameCount int // default: defaultTXFrameCount
+}
+
+// TXFrameHeader mirrors tpacket2_hdr from <linux/if_packet.h>.
+// Overlaid on each TX slot in the mmap'd ring.
+// Write the frame bytes after this header at offset Mac, then set
+// Status = tpStatusSendRequest and call sendmsg to kick the kernel.
+type TXFrameHeader struct {
+	Status  uint32
+	Len     uint32 // frame length (set by kernel on TX completion)
+	SnapLen uint32
+	Mac     uint16 // offset from header start to frame bytes
+	Net     uint16
+	Sec     uint32
+	Nsec    uint32
+	VlanTCI uint16
+	VLANID  uint16
+	_       [4]byte // padding to TPACKET_ALIGNMENT
+}
+
+// TXRing owns all state for a single TPACKET_V2 transmit ring.
+// Create via OpenTX; do not copy after creation.
+type TXRing struct {
+	fd         int
+	mmap       []byte
+	frames     [][]byte // per-frame slices into mmap
+	frameSize  int
+	frameCount int
+	cur        int // next slot to use
 }
