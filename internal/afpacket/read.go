@@ -7,8 +7,8 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// Frame is a zero-copy view of one captured packet inside an RX block
-// Data points into mmap'd memory. Do not hold it after calling ReturnBlock
+// Frame is a zero-copy view of one captured packet inside an RX block.
+// Data points into mmap'd memory. Do not hold it after calling ReturnBlock.
 type Frame struct {
 	Data      []byte
 	Timestamp time.Time
@@ -16,9 +16,9 @@ type Frame struct {
 	WireLen   uint32
 }
 
-// PollBlock() blocks until the next ring block is ready and returns a cursor
-// timeoutMs is passed to poll(2); use -1 to block indefinitely
-// Returns (nil, nil) on timeout
+// PollBlock() blocks until the next ring block is ready and returns a cursor.
+// timeoutMs is passed to poll(2); use -1 to block indefinitely.
+// Returns (nil, nil) on timeout.
 func (r *RXRing) PollBlock(timeoutMs int) (*BlockCursor, error) {
 	for {
 		hdr := r.blockHeader(r.cur)
@@ -48,7 +48,7 @@ func (r *RXRing) PollBlock(timeoutMs int) (*BlockCursor, error) {
 	}
 }
 
-// BlockCursor iterates packets inside one RX block
+// BlockCursor iterates packets inside one RX block.
 type BlockCursor struct {
 	ring  *RXRing
 	idx   int
@@ -58,15 +58,15 @@ type BlockCursor struct {
 	cur   uintptr // pointer to current PacketHeader in mmap'd memory
 }
 
-// Next returns the next Frame in the block
-// Returns (Frame{}, false) when the block is exhausted
+// Next returns the next Frame in the block.
+// Returns (Frame{}, false) when the block is exhausted.
 func (c *BlockCursor) Next() (Frame, bool) {
 	if c.pos >= c.count {
 		return Frame{}, false
 	}
 
 	if c.pos == 0 {
-		// first packet starts at OffsetToFirstPkt from block base
+		// first packet starts at OffsetToFirstPkt from block base.
 		blockBase := uintptr(unsafe.Pointer(&c.ring.blocks[c.idx][0]))
 		c.cur = blockBase + uintptr(c.hdr.OffsetToFirstPkt)
 	}
@@ -86,16 +86,16 @@ func (c *BlockCursor) Next() (Frame, bool) {
 	return f, true
 }
 
-// ReturnBlock gives the block back to the kernel
-// Must be called exactly once. All Frame values from this cursor are invalid after
+// ReturnBlock gives the block back to the kernel.
+// Must be called exactly once. All Frame values from this cursor are invalid after.
 func (c *BlockCursor) ReturnBlock() {
 	c.hdr.Status = tpStatusKernel
 }
 
-// Len returns the total number of packets in this block
+// Len returns the total number of packets in this block.
 func (c *BlockCursor) Len() int { return c.count }
 
-// blockHeader casts the start of block i to a *BlockHeader
+// blockHeader casts the start of block i to a *BlockHeader.
 func (r *RXRing) blockHeader(i int) *BlockHeader {
 	return (*BlockHeader)(unsafe.Pointer(&r.blocks[i][0])) //nolint:unsafeptr
 }
