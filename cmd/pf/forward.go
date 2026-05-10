@@ -83,3 +83,8 @@ func (f *Forwarder) Stats() ForwarderStats {
 		TapPackets: f.tapPkts.Load(),
 	}
 }
+
+// RXStats returns kernel-level drop counters from the RX ring.
+func (f *Forwarder) RXStats() (afpacket.Stats, error) {
+	return f.rx.Stats()
+}
