@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/rangaroo/highload-monitor/internal/proto"
 )
@@ -35,7 +36,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	s.writeJSON(w, proto.HealthResponse{Status:"ok"})
+	s.writeJSON(w, proto.HealthResponse{Status: "ok"})
 }
 
 func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
@@ -43,18 +44,18 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	
+
 	fs := s.forwarder.Stats()
 	kstats, err := s.forwarder.RXStats()
 	if err != nil {
-		http.Error(w, fmt.Sprintf("stats: %v", err), http.StatusInternalServerError))
+		http.Error(w, fmt.Sprintf("stats: %v", err), http.StatusInternalServerError)
 		return
 	}
 
 	s.writeJSON(w, proto.StatsResponse{
-		RXPackets: fs.RXPackets,
-		RXDrops: uint64(kstats.Drops),
-		TXPackets: fs.TXPackets,
+		RXPackets:    fs.RXPackets,
+		RXDrops:      uint64(kstats.Drops),
+		TXPackets:    fs.TXPackets,
 		FreezeQCount: uint64(kstats.FreezeQCount),
 	})
 }
@@ -65,12 +66,12 @@ func (s *Server) handleFilters(w http.ResponseWriter, r *http.Request) {
 		s.writeJSON(w, proto.FilterListResponse{Filters: s.engine.List()})
 
 	case http.MethodPost:
-		body, err := io.ReadAll(io.LimitReader((r.Body, 4096)))
+		body, err := io.ReadAll(io.LimitReader(r.Body, 4096))
 		if err != nil {
 			http.Error(w, "read body", http.StatusBadRequest)
 			return
 		}
-		
+
 		var req proto.AddFilterRequest
 		if err := s.codec.Unmarshal(body, &req); err != nil {
 			http.Error(w, fmt.Sprintf("decode: %v", err), http.StatusBadRequest)
@@ -87,7 +88,7 @@ func (s *Server) handleFilters(w http.ResponseWriter, r *http.Request) {
 
 	case http.MethodDelete:
 		// DELETE /v1/filters/{id}
-		id := strings.TrimPrefix(r.URL.Path, proto.PathFilters + "/")
+		id := strings.TrimPrefix(r.URL.Path, proto.PathFilters+"/")
 		if id == "" {
 			http.Error(w, "missing filter id", http.StatusBadRequest)
 			return
@@ -95,10 +96,10 @@ func (s *Server) handleFilters(w http.ResponseWriter, r *http.Request) {
 
 		s.engine.Remove(id)
 		w.WriteHeader(http.StatusNoContent)
-	
+
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-	 }
+	}
 }
 
 func (s *Server) handleDumpEndpoint(w http.ResponseWriter, r *http.Request) {
