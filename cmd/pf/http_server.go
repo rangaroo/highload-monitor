@@ -27,6 +27,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc(proto.PathHealth, s.handleHealth)
 	mux.HandleFunc(proto.PathStats, s.handleStats)
 	mux.HandleFunc(proto.PathFilters, s.handleFilters)
+	mux.HandleFunc(proto.PathFilters+"/", s.handleFilters) // DELETE /v1/filters/{id}
 	mux.HandleFunc(proto.PathDumpEndpoint, s.handleDumpEndpoint)
 	return mux
 }

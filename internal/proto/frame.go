@@ -35,19 +35,18 @@ func NewBinaryFrameWriter() FrameWriter { return binaryFrameRW{} }
 // NewBinaryFrameReader returns a FrameReader using the compact binary format
 func NewBinaryFrameReader() FrameReader { return binaryFrameRW{} }
 
-// binary wire formar is little endian
-// [magic u16][version u8][filter_id u32][ts_ns u64][wire_len u32][payload_len u16][payload...]
+// binary wire format is little endian
+// [magic u16][version u8][filter_id u32][ts_ns u64][pkt_len u16][payload...]
 type binaryFrameRW struct{}
 
 func (binaryFrameRW) WriteFrame(w io.Writer, f *DumpFrame) error {
 	payLen := uint16(len(f.Payload))
-	hdr := [19]byte{}
+	hdr := [15]byte{}
 	binary.LittleEndian.PutUint16(hdr[0:], frameMagic)
 	hdr[2] = frameVersion
 	binary.LittleEndian.PutUint32(hdr[3:], f.FilterID)
 	binary.LittleEndian.PutUint64(hdr[7:], f.TimeStampNs)
-	binary.LittleEndian.PutUint32(hdr[15:], f.WireLen)
-	binary.LittleEndian.PutUint16(hdr[17:], payLen)
+	binary.LittleEndian.PutUint16(hdr[13:], payLen)
 	if _, err := w.Write(hdr[:]); err != nil {
 		return err
 	}
@@ -56,7 +55,7 @@ func (binaryFrameRW) WriteFrame(w io.Writer, f *DumpFrame) error {
 }
 
 func (binaryFrameRW) ReadFrame(r io.Reader) (*DumpFrame, error) {
-	var hdr [19]byte
+	var hdr [15]byte
 	if _, err := io.ReadFull(r, hdr[:]); err != nil {
 		return nil, err
 	}
@@ -66,7 +65,7 @@ func (binaryFrameRW) ReadFrame(r io.Reader) (*DumpFrame, error) {
 	if ver := hdr[2]; ver != frameVersion {
 		return nil, fmt.Errorf("unsupported frame version %d", ver)
 	}
-	payLen := binary.LittleEndian.Uint16(hdr[17:])
+	payLen := binary.LittleEndian.Uint16(hdr[13:])
 	payload := make([]byte, payLen)
 	if _, err := io.ReadFull(r, payload); err != nil {
 		return nil, err
@@ -74,7 +73,7 @@ func (binaryFrameRW) ReadFrame(r io.Reader) (*DumpFrame, error) {
 	return &DumpFrame{
 		FilterID:    binary.LittleEndian.Uint32(hdr[3:]),
 		TimeStampNs: binary.LittleEndian.Uint64(hdr[7:]),
-		WireLen:     binary.LittleEndian.Uint32(hdr[15:]),
+		WireLen:     uint32(payLen),
 		Payload:     payload,
 	}, nil
 }

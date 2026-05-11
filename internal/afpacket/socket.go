@@ -99,6 +99,10 @@ func Open(cfg Config) (*RXRing, error) {
 		}
 	}
 
+	// ignore outgoing packets on the same iface
+	// prevents capturing our own TX as RX, which would cause forwarding loops
+	_ = setsockoptInt(fd, unix.SOL_PACKET, 23 /*PACKET_IGNORE_OUTGOING*/, 1)
+
 	ok = true
 	return &RXRing{
 		fd:     fd,
