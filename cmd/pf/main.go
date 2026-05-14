@@ -46,7 +46,7 @@ func main() {
 	defer tx.Close()
 
 	// filter engine - userspace 5-tuple match + dump tap
-	engine := NewFilterEngine()
+	engine := NewFilterEngine(rx)
 
 	// forwarder - RX -> tap -> TX hot loop
 	fwd := NewForwarder(rx, tx, engine)
