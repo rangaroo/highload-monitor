@@ -14,27 +14,37 @@ This repo has the **Packet Forwarder (PF)**. A companion **Analyzer** runs as a 
 
 ## Status
 
-Data plane works end-to-end. Open items:
-- Unit tests for `FilterEngine` (parseFrame, compileFilter)
-- Kernel cBPF pre-filter (`internal/bpfc`) — biggest perf lever still open
+**Data plane:** capture, forward, filter, dump — all working end-to-end.
+
+**Analyzer:** separate binary consumes the dump stream, maintains per-filter stats (packet count, bytes, unique src/dst IPs via HLL, src IP Shannon entropy).
+
+**Kernel pre-filter:** cBPF compiler + SO_ATTACH_FILTER integration done. Filters are recompiled + reattached on every Add/Remove.
+
+**Open items:**
 - `PACKET_FANOUT` for multi-RX-queue scaling
-- `sync.Pool` for the dump frame copies
-- `docs/benchmarks.md` with measured pps
+- `sync.Pool` for dump frame copies (perf opt)
+- benchmarks.md with measured pps on real hardware
 
 See [docs/architecture.md](docs/architecture.md) for the full design and improvement paths.
 
 ## Layout
 
+**Packet Forwarder (pf):**
 ```
-cmd/pf/             daemon entry point + HTTP/dump servers, forwarder, filter engine
-internal/afpacket/  TPACKET_V3 RX ring + TPACKET_V2 TX ring
-internal/proto/     wire DTOs + swappable Codec/FrameWriter interfaces
-internal/bpfc/      (stub) cBPF compiler for kernel pre-filter
-internal/flow/      (stub) 5-tuple key
-internal/pktpool/   (stub) sync.Pool for frame buffers
-internal/stats/     (stub) HLL, entropy — analyzer-side, may move
-scripts/            netns-setup.sh — veth pair for local testing
-docs/               architecture + benchmarks
+cmd/pf/             daemon: socket + rings, HTTP control, dump server, forwarder loop
+internal/afpacket/  TPACKET_V3 RX ring (block-based), TPACKET_V2 TX ring
+internal/bpfc/      cBPF compiler: FilterSpec → kernel BPF program
+internal/proto/     wire DTOs (FilterSpec, DumpFrame) + Codec/FrameWriter interfaces
+scripts/            netns-setup.sh (veth pair), bench-pktgen.sh (pktgen load)
+docs/               architecture.md, benchmarks.md
+```
+
+**Analyzer (separate binary):**
+```
+cmd/analyzer/       TCP dump receiver + per-filter stats aggregator
+internal/control/   HTTP client for pf control plane
+internal/dump/      TCP framed reader (auto-reconnect on disconnect)
+internal/stats/     HLL (axiomhq/hyperloglog), Shannon entropy, counters
 ```
 
 ## Requirements
@@ -46,33 +56,44 @@ docs/               architecture + benchmarks
 ## Build
 
 ```sh
-go build ./cmd/pf
+go build ./cmd/pf       # Packet Forwarder
+go build ./cmd/analyzer # Analyzer
 ```
 
 ## Quick test on a veth pair
 
+**Terminal 1: Set up and start PF**
+
 ```sh
-# 1. set up veth0 (192.168.99.1) ↔ veth1 (192.168.99.2)
 sudo ./scripts/netns-setup.sh
-
-# 2. start PF on veth0
 sudo ./pf -iface veth0 -promisc
+```
 
-# 3. (other terminal) check health, add a filter
+**Terminal 2: Run Analyzer**
+
+```sh
+./analyzer -pf http://localhost:9100 -filter "tcp::"
+```
+
+**Terminal 3: Control plane / traffic generation**
+
+```sh
+# health check
 curl http://localhost:9100/v1/health
+
+# add a TCP filter (src 192.168.99.0/24, dst port 443)
 curl -X POST http://localhost:9100/v1/filters \
   -H 'Content-Type: application/json' \
   -d '{"filter":{"src_ip":"192.168.99.0/24","dst_port":443,"protocol":"tcp"}}'
 
-# 4. (other terminal) generate traffic from veth1
-ping -c 10 -I veth1 192.168.99.1
+# generate TCP traffic from veth1 (any port to 443)
+nc -vz -w 1 192.168.99.1 443 < /dev/null || true
 
-# 5. (other terminal) consume the dump stream
-nc 127.0.0.1 9101 | hexdump -C
-
-# 6. watch stats — rx_drops must stay 0
+# watch live stats — rx_drops must stay 0
 watch -n1 'curl -s http://localhost:9100/v1/stats | jq'
 ```
+
+**Analyzer output (Terminal 2):** JSON per second showing per-filter packet count, bytes, unique src/dst IPs, src IP entropy.
 
 ## Flags
 
