@@ -14,7 +14,7 @@ This repo has the **Packet Forwarder (PF)**. A companion **Analyzer** runs as a 
 
 ## Status
 
-**Data plane:** capture, forward, filter, dump — all working end-to-end.
+**Data plane:** capture, forward, filter, dump - all working end-to-end.
 
 **Analyzer:** separate binary consumes the dump stream, maintains per-filter stats (packet count, bytes, unique src/dst IPs via HLL, src IP Shannon entropy).
 
@@ -141,6 +141,41 @@ All fields optional. Omitted fields = wildcard. CIDR or single-IP both accepted.
  magic(u16) | ver(u8) | filter_id(u32) | ts_ns(u64) | wire_len(u32) | payload_len(u16) | payload[...]
 ```
 
-Length-prefixed, no framing markers between frames. Reader does `io.ReadFull` of the 19-byte header then `payload_len` bytes.
+Length-prefixed, no framing markers between frames. Reader does `io.ReadFull` of the 15-byte header then `payload_len` bytes.
 
-## Integration with `pcap-traffic-generator`
+## Testing
+
+**Unit tests:**
+```bash
+go test ./...
+```
+
+Covers:
+- cBPF compiler (empty filter, single filter, multi-filter union, bad input)
+- FilterEngine frame parsing and filter matching
+- HLL cardinality estimation (axiomhq/hyperloglog)
+
+**Integration test (manual, requires root):**
+```bash
+sudo ./scripts/netns-setup.sh
+sudo ./scripts/test-integration.sh
+```
+
+Verifies zero-loss end-to-end packet flow: pf + analyzer on veth pair.
+
+**Demo (requires veth pair):**
+See [docs/demo.md](docs/demo.md) for live demo guide (3-pane tmux, asciinema recording).
+
+**Benchmarks:**
+```bash
+sudo ./scripts/bench-pktgen.sh
+```
+
+Measures breaking-point pps before `rx_drops > 0`. See [docs/benchmarks.md](docs/benchmarks.md) for methodology and results.
+
+## Documentation
+
+- [docs/architecture.md](docs/architecture.md) - full system design, data flow, improvement paths
+- [docs/benchmarks.md](docs/benchmarks.md) - performance results, methodology, bottleneck analysis
+- [docs/demo.md](docs/demo.md) - live demo walkthrough
+- [docs/presentation-outline.md](docs/presentation-outline.md) - 10-slide presentation outline
