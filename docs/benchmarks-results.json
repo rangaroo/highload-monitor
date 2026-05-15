@@ -1,0 +1,10 @@
+{
+  "metadata": {
+    "description": "Performance comparison across pf branches. One run object per branch/commit. Append-only; never edit past runs.",
+    "hardware": "TBD - fill on first run (e.g. veth pair on <hostname>, <cpu model>)",
+    "kernel": "TBD - uname -r",
+    "go_version": "TBD - go version",
+    "traffic": "pktgen flood, 1500B frames, randomized 5-tuple"
+  },
+  "runs": []
+}
