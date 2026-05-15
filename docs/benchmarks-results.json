@@ -1,10 +1,22 @@
 {
   "metadata": {
     "description": "Performance comparison across pf branches. One run object per branch/commit. Append-only; never edit past runs.",
-    "hardware": "TBD - fill on first run (e.g. veth pair on <hostname>, <cpu model>)",
-    "kernel": "TBD - uname -r",
-    "go_version": "TBD - go version",
-    "traffic": "pktgen flood, 1500B frames, randomized 5-tuple"
+    "hardware": "veth pair, 8-core x86_64",
+    "kernel": "6.17.0-23-generic",
+    "go_version": "1.25.4",
+    "traffic": "udpflood raw AF_PACKET injector, 1000B frames, single 5-tuple"
   },
-  "runs": []
+  "runs": [
+    {
+      "branch": "main",
+      "commit": "7f529fd",
+      "description": "baseline: cBPF, single RX queue, no fanout",
+      "date": "2026-05-15",
+      "pps": 547171,
+      "gbps": 4.38,
+      "cpu_percent": 100,
+      "rx_drops_at_pps": 0,
+      "notes": "veth 8-core host; pf pinned 1 core @100% (27usr/73sys); zero-loss; sender also ~547k cap"
+    }
+  ]
 }
