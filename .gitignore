@@ -2,6 +2,7 @@
 /bin/
 /pf
 /analyzer
+/udpflood
 
 # Go test/coverage artifacts
 *.test

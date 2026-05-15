@@ -9,7 +9,7 @@
 # Procedure:
 #  1. Start pf on veth0
 #  2. Start analyzer, register TCP filter
-#  3. Generate TCP traffic from veth1 → veth0:443
+#  3. Generate TCP traffic from veth1 -> veth0:443
 #  4. Poll analyzer output for packet count + entropy
 #  5. Stop, verify rx_drops == 0
 
@@ -33,6 +33,12 @@ if [ ! -x "$ANALYZER_BIN" ]; then
 	exit 1
 fi
 
+UDPFLOOD_BIN="${UDPFLOOD_BIN:-.}/udpflood"
+if [ ! -x "$UDPFLOOD_BIN" ]; then
+	echo "ERROR: $UDPFLOOD_BIN not found (go build ./cmd/udpflood)" >&2
+	exit 1
+fi
+
 cleanup() {
 	echo "Cleaning up..." >&2
 	pkill -f "$PF_BIN" || true
@@ -46,21 +52,26 @@ echo "[1/5] Starting pf on $IFACE..." >&2
 PF_PID=$!
 sleep 2
 
-echo "[2/5] Starting analyzer..." >&2
-"$ANALYZER_BIN" -pf "$PF_HTTP" -filter "tcp::" -interval 1s > /tmp/analyzer.log 2>&1 &
+# udpflood emits UDP/443, so analyzer + filter must target UDP/443.
+echo "[2/5] Starting analyzer (udp::443)..." >&2
+"$ANALYZER_BIN" -pf "$PF_HTTP" -filter "udp::443" -interval 1s > /tmp/analyzer.log 2>&1 &
 ANALYZER_PID=$!
 sleep 1
 
-echo "[3/5] Registering TCP filter..." >&2
+echo "[3/5] Registering UDP filter..." >&2
 curl -s -X POST "$PF_HTTP/v1/filters" \
 	-H 'Content-Type: application/json' \
-	-d '{"filter":{"protocol":"tcp","dst_port":443}}' | jq '.id' || true
+	-d '{"filter":{"protocol":"udp","dst_port":443}}' | jq '.id' || true
 
-echo "[4/5] Generating TCP traffic to veth0:443..." >&2
-# Use nc to connect; it will timeout but that's OK, we just need SYN packets
-timeout 3 nc -w 1 192.168.99.1 443 < /dev/null > /dev/null 2>&1 || true
+echo "[4/5] Injecting 10000 UDP frames on veth1 (netns pftest) -> veth0:443..." >&2
+# veth1 lives in the pftest netns (see netns-setup.sh). Run udpflood there so
+# frames cross to veth0's RX in the default ns. A localhost UDP socket would
+# be loopback-shortcut and never hit pf.
+ip netns exec pftest "$UDPFLOOD_BIN" -iface veth1 \
+	-dst-ip 192.168.99.1 -src-ip 192.168.99.2 \
+	-dst-port 443 -size 1000 -count 10000 2>&1 | sed 's/^/  udpflood: /' >&2
 
-sleep 1
+sleep 2
 
 echo "[5/5] Checking results..." >&2
 stats=$(curl -s "$PF_HTTP/v1/stats")
@@ -75,20 +86,34 @@ echo "RX drops: $rx_drops"
 echo "Analyzer JSON lines: $analyzer_lines"
 echo ""
 
+FAIL=0
+
 if [ "$rx_drops" -gt 0 ]; then
-	echo "FAIL: rx_drops > 0 (expected 0)" >&2
-	exit 1
+	echo "FAIL: rx_drops > 0 (expected 0 — zero-loss criterion)" >&2
+	FAIL=1
 fi
 
-if [ "$rx_packets" -eq 0 ]; then
-	echo "WARN: no packets captured (check veth setup + traffic generation)" >&2
+if [ "$rx_packets" -lt 100 ]; then
+	echo "FAIL: only $rx_packets packets captured (expected 100+; traffic gen broken)" >&2
+	FAIL=1
 fi
 
 if [ "$analyzer_lines" -lt 1 ]; then
-	echo "WARN: analyzer produced no output" >&2
+	echo "FAIL: analyzer produced no output" >&2
+	FAIL=1
 fi
 
-echo "PASS: zero-loss, end-to-end flow confirmed" >&2
+if [ "$FAIL" -ne 0 ]; then
+	echo "" >&2
+	echo "INTEGRATION TEST FAILED" >&2
+	echo ""
+	echo "=== Logs ==="
+	echo "--- pf.log ---"; tail -15 /tmp/pf.log
+	echo "--- analyzer.log ---"; tail -10 /tmp/analyzer.log
+	exit 1
+fi
+
+echo "PASS: zero-loss confirmed, $rx_packets packets captured + dumped" >&2
 echo ""
 echo "=== Logs ==="
 echo "--- pf.log ---"
