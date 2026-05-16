@@ -31,7 +31,7 @@
     }
     ,{
       "branch": "feat/sync-pool",
-      "commit": "pending",
+      "commit": "ebc27e7",
       "description": "sync.Pool for BlockCursor and dump payload buffers",
       "date": "2026-05-16",
       "pps": 1257410,
