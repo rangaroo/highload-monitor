@@ -61,7 +61,7 @@ func (cf compiledFilter) matches(p parsedFrame) bool {
 // FilterEngine maintains active filters and implements DumpTap.
 //
 // On every Add/Remove it recompiles the union of all current filters into a
-// classic-BPF program and reattaches it to the RX socket. The kernel pre-filter
+// classic-BPF program and reattaches it to all RX sockets. The kernel pre-filter
 // drops traffic no userspace filter wants before it ever reaches the ring.
 type FilterEngine struct {
 	mu      sync.RWMutex
@@ -69,16 +69,16 @@ type FilterEngine struct {
 	nextID  atomic.Uint32
 	ch      chan proto.DumpFrame
 	drops   atomic.Uint64 // matched frames dropped because ch was full
-	rx      *afpacket.RXRing
+	rxRings []*afpacket.RXRing
 }
 
-// NewFilterEngine wires an engine to its RX ring. rx may be nil in tests; in
-// that case the kernel pre-filter is silently skipped.
-func NewFilterEngine(rx *afpacket.RXRing) *FilterEngine {
+// NewFilterEngine wires an engine to one or more RX rings. rings may be nil/empty
+// in tests; in that case the kernel pre-filter is silently skipped.
+func NewFilterEngine(rings ...*afpacket.RXRing) *FilterEngine {
 	return &FilterEngine{
 		filters: make(map[string]compiledFilter),
 		ch:      make(chan proto.DumpFrame, dumpChanSize),
-		rx:      rx,
+		rxRings: rings,
 	}
 }
 
@@ -115,13 +115,15 @@ func (e *FilterEngine) Remove(id proto.FilterID) {
 // userspace exact match still catches everything. That's a perf loss, not a
 // correctness one, so we log and move on rather than failing the request.
 func (e *FilterEngine) reattachLocked() {
-	if e.rx == nil {
+	if len(e.rxRings) == 0 {
 		return
 	}
 
 	if len(e.filters) == 0 {
-		if err := e.rx.DetachFilter(); err != nil {
-			log.Printf("filter_engine: detach kernel filter: %v", err)
+		for _, rx := range e.rxRings {
+			if err := rx.DetachFilter(); err != nil {
+				log.Printf("filter_engine: detach kernel filter: %v", err)
+			}
 		}
 		return
 	}
@@ -134,14 +136,18 @@ func (e *FilterEngine) reattachLocked() {
 	raw, err := bpfc.Compile(specs)
 	if err != nil {
 		log.Printf("filter_engine: bpfc compile failed, falling back to no kernel pre-filter: %v", err)
-		if derr := e.rx.DetachFilter(); derr != nil {
-			log.Printf("filter_engine: detach after compile failure: %v", derr)
+		for _, rx := range e.rxRings {
+			if derr := rx.DetachFilter(); derr != nil {
+				log.Printf("filter_engine: detach after compile failure: %v", derr)
+			}
 		}
 		return
 	}
 
-	if err := e.rx.AttachFilter(raw); err != nil {
-		log.Printf("filter_engine: attach kernel filter: %v", err)
+	for _, rx := range e.rxRings {
+		if err := rx.AttachFilter(raw); err != nil {
+			log.Printf("filter_engine: attach kernel filter: %v", err)
+		}
 	}
 }
 

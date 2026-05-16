@@ -7,9 +7,10 @@
 //
 //	sudo udpflood -iface veth1 -dst-ip 192.168.99.1 -dst-port 443 -count 100000
 //	sudo udpflood -iface veth1 -pps 500000 -duration 5s   # rate-limited
+//	sudo udpflood -iface veth1 -parallel 4 -duration 5s   # 4 sockets, distinct src ports
 //
-// Frames carry a fixed src/dst MAC and a configurable 5-tuple. Payload is
-// zero-filled to -size bytes total (Ethernet header included).
+// With -parallel N, each worker uses src_port + worker_index so the 5-tuple
+// hash spreads traffic across PACKET_FANOUT queues on the receiver.
 package main
 
 import (
@@ -19,6 +20,8 @@ import (
 	"log"
 	"net"
 	"os"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/sys/unix"
@@ -29,19 +32,26 @@ func main() {
 	dstIP := flag.String("dst-ip", "192.168.99.1", "destination IPv4")
 	srcIP := flag.String("src-ip", "192.168.99.2", "source IPv4")
 	dstPort := flag.Int("dst-port", 443, "destination UDP port")
-	srcPort := flag.Int("src-port", 12345, "source UDP port")
+	srcPort := flag.Int("src-port", 12345, "base source UDP port (each -parallel worker adds its index)")
 	size := flag.Int("size", 1000, "total frame size in bytes (>= 42)")
-	count := flag.Int("count", 100000, "number of frames to send (0 = until duration)")
-	pps := flag.Int("pps", 0, "rate limit in packets/sec (0 = as fast as possible)")
-	duration := flag.Duration("duration", 0, "stop after this long (0 = no limit)")
+	count := flag.Int("count", 0, "frames per worker to send (0 = run until -duration)")
+	pps := flag.Int("pps", 0, "rate limit in packets/sec per worker (0 = as fast as possible)")
+	duration := flag.Duration("duration", 5*time.Second, "stop after this long (0 = no limit, requires -count)")
+	parallel := flag.Int("parallel", 1, "number of parallel sender goroutines (each gets a unique src port)")
 	flag.Parse()
 
 	if *iface == "" {
-		fmt.Fprintln(os.Stderr, "usage: udpflood -iface veth1 [-dst-ip ...] [-count N] [-pps N]")
+		fmt.Fprintln(os.Stderr, "usage: udpflood -iface veth1 [-dst-ip ...] [-count N] [-pps N] [-parallel N]")
 		os.Exit(1)
 	}
 	if *size < 42 {
 		log.Fatalf("size must be >= 42 (eth14 + ip20 + udp8), got %d", *size)
+	}
+	if *count == 0 && *duration == 0 {
+		log.Fatalf("-count 0 requires -duration > 0")
+	}
+	if *parallel < 1 {
+		*parallel = 1
 	}
 
 	nic, err := net.InterfaceByName(*iface)
@@ -49,40 +59,65 @@ func main() {
 		log.Fatalf("interface %q: %v", *iface, err)
 	}
 
-	fd, err := unix.Socket(unix.AF_PACKET, unix.SOCK_RAW, int(htons(unix.ETH_P_ALL)))
-	if err != nil {
-		log.Fatalf("socket: %v", err)
-	}
-	defer unix.Close(fd)
-
-	addr := &unix.SockaddrLinklayer{
-		Protocol: htons(unix.ETH_P_ALL),
-		Ifindex:  nic.Index,
-		Halen:    6,
-	}
-	copy(addr.Addr[:6], []byte{0xff, 0xff, 0xff, 0xff, 0xff, 0xff})
-
-	frame := buildFrame(*srcIP, *dstIP, uint16(*srcPort), uint16(*dstPort), *size)
-
-	var (
-		sent  uint64
-		start = time.Now()
-		// for rate limiting
-		interval time.Duration
-		next     time.Time
-	)
-	if *pps > 0 {
-		interval = time.Second / time.Duration(*pps)
-		next = time.Now()
-	}
-
+	start := time.Now()
 	deadline := time.Time{}
 	if *duration > 0 {
 		deadline = start.Add(*duration)
 	}
 
+	var totalSent atomic.Uint64
+	var wg sync.WaitGroup
+
+	for i := 0; i < *parallel; i++ {
+		wg.Add(1)
+		go func(workerIdx int) {
+			defer wg.Done()
+
+			fd, err := unix.Socket(unix.AF_PACKET, unix.SOCK_RAW, int(htons(unix.ETH_P_ALL)))
+			if err != nil {
+				log.Fatalf("worker %d socket: %v", workerIdx, err)
+			}
+			defer unix.Close(fd)
+
+			addr := &unix.SockaddrLinklayer{
+				Protocol: htons(unix.ETH_P_ALL),
+				Ifindex:  nic.Index,
+				Halen:    6,
+			}
+			copy(addr.Addr[:6], []byte{0xff, 0xff, 0xff, 0xff, 0xff, 0xff})
+
+			// each worker gets a distinct src port → distinct 5-tuple → spreads across fanout queues
+			workerSrcPort := uint16(*srcPort + workerIdx)
+			frame := buildFrame(*srcIP, *dstIP, workerSrcPort, uint16(*dstPort), *size)
+
+			n := runSender(fd, addr, frame, *count, *pps, deadline)
+			totalSent.Add(n)
+		}(i)
+	}
+
+	wg.Wait()
+
+	elapsed := time.Since(start)
+	sent := totalSent.Load()
+	rate := float64(sent) / elapsed.Seconds()
+	fmt.Printf("sent %d frames in %s (%.0f pps, %.2f Mbps) across %d workers\n",
+		sent, elapsed.Round(time.Millisecond), rate,
+		rate*float64(*size)*8/1e6, *parallel)
+}
+
+// runSender loops until count frames sent or deadline reached. Returns frames sent.
+func runSender(fd int, addr *unix.SockaddrLinklayer, frame []byte, count, targetPPS int, deadline time.Time) uint64 {
+	var sent uint64
+
+	var interval time.Duration
+	var next time.Time
+	if targetPPS > 0 {
+		interval = time.Second / time.Duration(targetPPS)
+		next = time.Now()
+	}
+
 	for {
-		if *count > 0 && sent >= uint64(*count) {
+		if count > 0 && sent >= uint64(count) {
 			break
 		}
 		if !deadline.IsZero() && time.Now().After(deadline) {
@@ -90,7 +125,6 @@ func main() {
 		}
 
 		if err := unix.Sendto(fd, frame, 0, addr); err != nil {
-			// EAGAIN/ENOBUFS under load: just retry
 			if err == unix.EAGAIN || err == unix.ENOBUFS {
 				continue
 			}
@@ -98,19 +132,14 @@ func main() {
 		}
 		sent++
 
-		if *pps > 0 {
+		if targetPPS > 0 {
 			next = next.Add(interval)
 			if d := time.Until(next); d > 0 {
 				time.Sleep(d)
 			}
 		}
 	}
-
-	elapsed := time.Since(start)
-	rate := float64(sent) / elapsed.Seconds()
-	fmt.Printf("sent %d frames in %s (%.0f pps, %.2f Mbps)\n",
-		sent, elapsed.Round(time.Millisecond), rate,
-		rate*float64(*size)*8/1e6)
+	return sent
 }
 
 // buildFrame assembles a minimal Ethernet + IPv4 + UDP frame, zero-padded to

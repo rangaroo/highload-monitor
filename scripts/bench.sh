@@ -25,6 +25,7 @@ DST_IP="192.168.99.1"
 SRC_IP="192.168.99.2"
 DST_PORT=443
 SIZE=1000
+PARALLEL="${PARALLEL:-1}"  # set PARALLEL=4 to use 4 sender goroutines (distinct src ports)
 
 if [ ! -x "$UDPFLOOD_BIN" ]; then
 	echo "ERROR: $UDPFLOOD_BIN not found (go build -o udpflood ./cmd/udpflood)" >&2
@@ -53,19 +54,18 @@ breaking_point=""
 for rate in "${rates[@]}"; do
 	rx_before=$(get_rx)
 
-	# 2-second burst at the target rate (count chosen to last ~2s; for
-	# unbounded, send a large fixed count).
+	# 3-second burst at the target rate. -duration used for all cases so
+	# -parallel workers terminate cleanly without a per-worker -count.
 	if [ "$rate" -eq 0 ]; then
-		count=5000000
 		label="unbounded"
 	else
-		count=$((rate * 2))
 		label="$rate"
 	fi
 
 	out=$(ip netns exec "$NS" "$UDPFLOOD_BIN" -iface "$IFACE" \
 		-dst-ip "$DST_IP" -src-ip "$SRC_IP" -dst-port "$DST_PORT" \
-		-size "$SIZE" -count "$count" ${rate:+-pps "$rate"} 2>&1)
+		-size "$SIZE" -duration 3s -parallel "$PARALLEL" \
+		${rate:+-pps "$rate"} 2>&1)
 
 	actual_pps=$(echo "$out" | grep -oE '[0-9]+ pps' | grep -oE '[0-9]+' || echo "?")
 

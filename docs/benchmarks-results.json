@@ -17,6 +17,17 @@
       "cpu_percent": 100,
       "rx_drops_at_pps": 0,
       "notes": "veth 8-core host; pf pinned 1 core @100% (27usr/73sys); zero-loss; sender also ~547k cap"
+    },
+    {
+      "branch": "feat/packet-fanout",
+      "commit": "0471081",
+      "description": "PACKET_FANOUT_HASH: 8 RX queues, each goroutine pinned to distinct CPU",
+      "date": "2026-05-16",
+      "pps": 1450857,
+      "gbps": 11.61,
+      "cpu_percent": 100,
+      "rx_drops_at_pps": 1450857,
+      "notes": "8 sockets in fanout group; 8 udpflood workers distinct src_port; kernel_drops=2896390 at sustained ~1.45Mpps (ring overflow, not CPU); zero-loss not achieved at this rate; 2.3x baseline pps at comparable load"
     }
   ]
 }

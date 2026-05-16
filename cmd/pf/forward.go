@@ -3,7 +3,10 @@ package main
 import (
 	"context"
 	"log"
+	"runtime"
 	"sync/atomic"
+
+	"golang.org/x/sys/unix"
 
 	"github.com/rangaroo/highload-monitor/internal/afpacket"
 )
@@ -87,4 +90,13 @@ func (f *Forwarder) Stats() ForwarderStats {
 // RXStats returns kernel-level drop counters from the RX ring.
 func (f *Forwarder) RXStats() (afpacket.Stats, error) {
 	return f.rx.Stats()
+}
+
+// pinToCPU locks the calling goroutine to its OS thread and sets CPU affinity
+// to the given logical CPU index. Best-effort: errors are non-fatal.
+func pinToCPU(cpu int) error {
+	runtime.LockOSThread()
+	var mask unix.CPUSet
+	mask.Set(cpu)
+	return unix.SchedSetaffinity(0, &mask)
 }
