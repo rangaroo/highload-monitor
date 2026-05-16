@@ -33,14 +33,16 @@ func main() {
 		*queues = 1
 	}
 
-	// TX ring - shared across all RX goroutines (per-slot ownership makes it safe)
-	tx, err := afpacket.OpenTX(afpacket.TXConfig{
-		Interface: *iface,
-	})
-	if err != nil {
-		log.Fatalf("open tx: %v", err)
+	// One TX ring per queue — avoids lock contention under fanout.
+	txRings := make([]*afpacket.TXRing, *queues)
+	for i := range txRings {
+		var err error
+		txRings[i], err = afpacket.OpenTX(afpacket.TXConfig{Interface: *iface})
+		if err != nil {
+			log.Fatalf("open tx[%d]: %v", i, err)
+		}
+		defer txRings[i].Close()
 	}
-	defer tx.Close()
 
 	// Open N RX sockets joined into the same PACKET_FANOUT_HASH group.
 	// The kernel distributes packets by 5-tuple hash so each socket sees a
@@ -56,6 +58,7 @@ func main() {
 			cfg.FanoutGroup = fanoutGroup
 			cfg.FanoutType = 0 // packetFanoutHash
 		}
+		var err error
 		rxRings[i], err = afpacket.Open(cfg)
 		if err != nil {
 			log.Fatalf("open rx[%d]: %v", i, err)
@@ -68,10 +71,10 @@ func main() {
 	// filter engine wired to all RX rings (attaches cBPF to each)
 	engine := NewFilterEngine(rxRings...)
 
-	// one Forwarder per RX ring; they all share the TX ring
+	// one Forwarder per RX ring, each with its own TX ring — no cross-goroutine contention
 	forwarders := make([]*Forwarder, *queues)
 	for i, rx := range rxRings {
-		forwarders[i] = NewForwarder(rx, tx, engine)
+		forwarders[i] = NewForwarder(rx, txRings[i], engine)
 	}
 
 	// dump server - streams matched frames to Analyzer over TCP
@@ -132,6 +135,12 @@ func main() {
 	case err := <-httpErr:
 		log.Fatalf("http server: %v", err)
 	}
+
+	// Interrupt all RX rings — wakes goroutines blocked in poll(2) immediately.
+	for _, rx := range rxRings {
+		rx.Interrupt()
+	}
+	fwdWg.Wait()
 
 	// aggregate stats across all forwarders
 	var totalRX, totalTX, totalTap uint64

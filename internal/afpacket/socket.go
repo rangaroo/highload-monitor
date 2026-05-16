@@ -112,10 +112,22 @@ func Open(cfg Config) (*RXRing, error) {
 	}, nil
 }
 
-// Close() releases the mmap and closes the socket
+// Interrupt wakes a goroutine blocked in PollBlock by closing the fd.
+// PollBlock returns EBADF/POLLNVAL and the goroutine can exit cleanly.
+// Call before Close; do not call PollBlock after Interrupt.
+func (r *RXRing) Interrupt() {
+	unix.Close(r.fd)
+	r.fd = -1
+}
+
+// Close releases the mmap and closes the socket.
+// If Interrupt was already called the fd close is skipped.
 func (r *RXRing) Close() error {
 	unix.Munmap(r.mmap)
-	return unix.Close(r.fd)
+	if r.fd >= 0 {
+		return unix.Close(r.fd)
+	}
+	return nil
 }
 
 // Stats() returns the kernel's drop counters for this socket

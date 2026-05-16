@@ -34,11 +34,17 @@ func (r *RXRing) PollBlock(timeoutMs int) (*BlockCursor, error) {
 			return c, nil
 		}
 
+		if r.fd < 0 {
+			return nil, nil // Interrupt() was called; signal clean shutdown
+		}
 		fds := []unix.PollFd{{Fd: int32(r.fd), Events: unix.POLLIN | unix.POLLERR}}
 		n, err := unix.Poll(fds, timeoutMs)
 		if err != nil {
 			if err == unix.EINTR {
-				continue // signar interrupted poll; retry
+				continue // signal interrupted poll; retry
+			}
+			if err == unix.EBADF {
+				return nil, nil // fd closed by Interrupt(); clean shutdown
 			}
 			return nil, err
 		}

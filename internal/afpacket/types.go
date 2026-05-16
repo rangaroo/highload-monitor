@@ -113,7 +113,7 @@ type RXRing struct {
 // blockSize must be a page multiple; blockSize = frameSize * framesPerBlock.
 const (
 	defaultTXFrameSize  = 2048 // covers 1500-byte MTU + tpacket2_hdr overhead
-	defaultTXFrameCount = 256  // 512 KiB total TX ring
+	defaultTXFrameCount = 256  // 512 KiB total TX ring per queue
 	defaultTXBlockSize  = 4096 // one page per block (2 frames per block)
 )
 
