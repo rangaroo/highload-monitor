@@ -1,120 +1,85 @@
-# Live Demo Guide
+# Demo Guide
 
-## Setup
+Shows pf capturing and forwarding live traffic, analyzer consuming a
+filter's stats stream, and the control plane API - all running on a
+veth pair in a network namespace.
 
-Build binaries:
+## Prerequisites
+
 ```bash
+# build
 go build -o pf ./cmd/pf
 go build -o analyzer ./cmd/analyzer
-```
+go build -o udpflood ./cmd/udpflood
 
-Set up veth pair:
-```bash
+# veth pair + netns
 sudo ./scripts/netns-setup.sh
 ```
 
-## Run Demo (3-pane tmux)
+## Quick run (3 separate terminals)
 
-Open tmux with 3 panes:
+**Terminal 1 - pf:**
 ```bash
-tmux new-session -s demo -x 120 -y 30
-tmux split-window -h
-tmux split-window -h
+sudo ./pf -iface veth0 -promisc -queues <n> # n - num of cores
 ```
 
-### Pane 1 (left): Packet Forwarder
-
+**Terminal 2 - analyzer** (waits for pf, registers a UDP:443 filter, prints stats):
 ```bash
-sudo ./pf -iface veth0 -promisc
+./analyzer -pf http://localhost:9100 -filter "udp::443" -interval 1s
 ```
 
-Expect output:
-```
-pf started on veth0 (http=:9100 dump=:9101)
-```
-
-### Pane 2 (middle): Analyzer
-
+**Terminal 3 - send traffic + poll stats:**
 ```bash
-./analyzer -pf http://localhost:9100 -filter "tcp::" -interval 1s
-```
+# flood traffic into the veth from inside pftest netns
+sudo ip netns exec pftest ./udpflood \
+  -iface veth1 -dst-ip 192.168.99.1 -dst-port 443 \
+  -parallel 4 -duration 10s
 
-Expect: JSON lines per second showing filter stats (packet count, entropy, cardinality).
+# watch pf stats
+watch -n 1 'curl -s http://localhost:9100/v1/stats | jq .'
 
-### Pane 3 (right): Control + Traffic
-
-Health check:
-```bash
-curl http://localhost:9100/v1/health
-```
-
-Watch stats in a loop:
-```bash
-watch -n 1 'curl -s http://localhost:9100/v1/stats | jq'
-```
-
-In another terminal within pane 3, send traffic:
-```bash
-# Method 1: nc connect attempt (generates TCP SYN)
-nc -w 1 192.168.99.1 443 < /dev/null
-
-# Method 2: persistent iperf-like traffic (if iperf installed)
-iperf -c 192.168.99.1 -p 443 -t 5
-
-# Method 3: simple ping (ICMP, not in TCP filter, but pf forwards it)
-ping -c 5 192.168.99.1
-```
-
-Add a filter dynamically:
-```bash
+# add a filter manually
 curl -X POST http://localhost:9100/v1/filters \
   -H 'Content-Type: application/json' \
-  -d '{"filter":{"protocol":"tcp","dst_port":443}}'
+  -d '{"filter":{"protocol":"udp","dst_port":443}}'
+
+# list filters
+curl -s http://localhost:9100/v1/filters | jq .
+
+# remove a filter (replace 1 with actual id)
+curl -X DELETE http://localhost:9100/v1/filters/1
 ```
 
-List filters:
-```bash
-curl http://localhost:9100/v1/filters | jq
-```
-
-## Expected Behavior
-
-1. **Pane 1 (pf):** logs capture rate, TX rate. On filter Add/Remove, logs cBPF recompile.
-2. **Pane 2 (analyzer):** JSON with `filter_id`, `packets`, `bytes`, `unique_src_ips`, `src_entropy_bits`.
-3. **Pane 3 (stats):** `rx_packets` and `rx_drops` climb; `rx_drops` must stay **0** throughout.
-
-## Recording (asciinema)
+## Automated tmux demo (for asciinema)
 
 ```bash
-asciinema rec demo.cast -t "Packet Forwarder Demo" -w 2
+# record
+asciinema rec demo.cast -t "highload-monitor demo"
+
+# in the recording, run:
+sudo ./scripts/demo.sh
+
+# stop with Ctrl-C, then Ctrl-D to end asciinema
 ```
 
-Then run the demo steps above. Stop recording with Ctrl-D.
+`scripts/demo.sh` launches pf, starts the analyzer, sends 10s of
+traffic, and polls stats -all in one terminal with sleep delays for
+readability.
 
-Play back:
-```bash
-asciinema play demo.cast
-```
+## What to show at the presentation
 
-Upload (optional):
-```bash
-asciinema upload demo.cast
-```
+1. `curl /v1/health` -> `{"status":"ok"}`
+2. Start udpflood -> watch `rx_packets` climb in `/v1/stats`, `rx_drops` stays 0
+3. `POST /v1/filters` -> analyzer JSON shows `packets`, `unique_src_ips`, `entropy_bits` updating
+4. `DELETE /v1/filters/{id}` -> analyzer stops updating that filter
+5. Ctrl-C pf -> final log line shows zero `kernel_drops`
 
 ## Troubleshooting
 
-**pf won't bind to veth0:**
-- Check veth pair exists: `ip link show veth0`
-- Ensure running with sufficient privileges (root or CAP_NET_RAW)
-
-**Analyzer connection refused:**
-- Check pf is listening on :9100: `curl http://localhost:9100/v1/health`
-- Check dump TCP server: `curl http://localhost:9100/v1/dump-endpoint`
-
-**No packets captured:**
-- Ensure traffic is actually flowing: `tcpdump -i veth0 -c 5`
-- Check veth1 is up and reachable: `ip link show veth1`
-
-**rx_drops > 0:**
-- Traffic rate exceeds single-core capacity (expected at high pps).
-- Try reducing traffic rate or enabling PACKET_FANOUT (future work).
+| Problem | Fix |
+|---|---|
+| `bind: permission denied` | run pf with `sudo` |
+| `interface not found: veth0` | run `sudo ./scripts/netns-setup.sh` |
+| `udpflood: no such network interface: veth1` | veth1 is in pftest netns - prefix with `sudo ip netns exec pftest` |
+| analyzer: `connection refused` | pf not running yet, or wrong `-pf` URL |
+| `rx_drops > 0` | reduce `-parallel` on udpflood, or increase `-queues` on pf |
