@@ -1,11 +1,16 @@
 package afpacket
 
 import (
+	"sync"
 	"time"
 	"unsafe"
 
 	"golang.org/x/sys/unix"
 )
+
+var cursorPool = sync.Pool{
+	New: func() any { return new(BlockCursor) },
+}
 
 // Frame is a zero-copy view of one captured packet inside an RX block.
 // Data points into mmap'd memory. Do not hold it after calling ReturnBlock.
@@ -24,7 +29,8 @@ func (r *RXRing) PollBlock(timeoutMs int) (*BlockCursor, error) {
 		hdr := r.blockHeader(r.cur)
 
 		if hdr.Status&tpStatusUser != 0 {
-			c := &BlockCursor{
+			c := cursorPool.Get().(*BlockCursor)
+			*c = BlockCursor{
 				ring:  r,
 				idx:   r.cur,
 				hdr:   hdr,
@@ -92,10 +98,11 @@ func (c *BlockCursor) Next() (Frame, bool) {
 	return f, true
 }
 
-// ReturnBlock gives the block back to the kernel.
+// ReturnBlock gives the block back to the kernel and returns the cursor to the pool.
 // Must be called exactly once. All Frame values from this cursor are invalid after.
 func (c *BlockCursor) ReturnBlock() {
 	c.hdr.Status = tpStatusKernel
+	cursorPool.Put(c)
 }
 
 // Len returns the total number of packets in this block.

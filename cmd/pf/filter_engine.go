@@ -14,6 +14,12 @@ import (
 	"github.com/rangaroo/highload-monitor/internal/proto"
 )
 
+// payloadPool reuses byte slices for dump frame payloads.
+// Slices are sized to the captured frame; the pool holds ~1000B slices on average.
+var payloadPool = sync.Pool{
+	New: func() any { return make([]byte, 0, 1500) },
+}
+
 const (
 	dumpChanSize = 8192
 	ethHdrLen    = 14
@@ -181,8 +187,8 @@ func (e *FilterEngine) Tap(f afpacket.Frame) {
 		}
 
 		// copy payload - f.Data points into mmap, invalid after ReturnBlock
-		payload := make([]byte, len(f.Data))
-		copy(payload, f.Data)
+		payload := payloadPool.Get().([]byte)
+		payload = append(payload[:0], f.Data...)
 
 		df := proto.DumpFrame{
 			FilterID:    cf.numID,

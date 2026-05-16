@@ -71,9 +71,11 @@ func (d *DumpServer) stream(ctx context.Context, conn net.Conn) {
 
 		case df := <-d.frames:
 			if err := d.fw.WriteFrame(buf, &df); err != nil {
+				payloadPool.Put(df.Payload[:0])
 				log.Printf("dump write: %v", err)
 				return
 			}
+			payloadPool.Put(df.Payload[:0])
 			d.sent.Add(1)
 
 		drain:
@@ -81,9 +83,11 @@ func (d *DumpServer) stream(ctx context.Context, conn net.Conn) {
 				select {
 				case df2 := <-d.frames:
 					if err := d.fw.WriteFrame(buf, &df2); err != nil {
+						payloadPool.Put(df2.Payload[:0])
 						log.Printf("dump write: %v", err)
 						return
 					}
+					payloadPool.Put(df2.Payload[:0])
 					d.sent.Add(1)
 				default:
 					break drain

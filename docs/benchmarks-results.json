@@ -29,5 +29,16 @@
       "rx_drops_at_pps": 0,
       "notes": "8 RX + 8 TX rings, one per queue; 8 udpflood workers distinct src_port; kernel_drops=0 across 30M+ packets; zero-loss; 2.3x baseline pps"
     }
+    ,{
+      "branch": "feat/sync-pool",
+      "commit": "pending",
+      "description": "sync.Pool for BlockCursor and dump payload buffers",
+      "date": "2026-05-16",
+      "pps": 1257410,
+      "gbps": 10.06,
+      "cpu_percent": 100,
+      "rx_drops_at_pps": 0,
+      "notes": "BlockCursor pooled per-block; payload bufs pooled in Tap/DumpServer; kernel_drops=0; throughput same as fanout - pool reduces GC latency not raw pps on no-filter bench"
+    }
   ]
 }
