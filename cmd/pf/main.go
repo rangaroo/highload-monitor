@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"math/rand"
 	"net/http"
 	"os"
 	"os/signal"
@@ -47,7 +48,9 @@ func main() {
 	// Open N RX sockets joined into the same PACKET_FANOUT_HASH group.
 	// The kernel distributes packets by 5-tuple hash so each socket sees a
 	// disjoint subset; together they see all traffic with no duplication.
-	const fanoutGroup = 1 // arbitrary non-zero group ID
+	// Random group ID avoids EINVAL when a previous pf instance left a
+	// stale fanout socket on the same group ID.
+	fanoutGroup := uint16(rand.Intn(0xfffe) + 1)
 	rxRings := make([]*afpacket.RXRing, *queues)
 	for i := range rxRings {
 		cfg := afpacket.Config{
@@ -55,7 +58,7 @@ func main() {
 			Promiscuous: *promisc,
 		}
 		if *queues > 1 {
-			cfg.FanoutGroup = fanoutGroup
+			cfg.FanoutGroup = uint16(fanoutGroup)
 			cfg.FanoutType = 0 // packetFanoutHash
 		}
 		var err error
@@ -80,9 +83,8 @@ func main() {
 	// dump server - streams matched frames to Analyzer over TCP
 	ds := NewDumpServer(*dumpAddr, engine.Frames(), proto.NewBinaryFrameWriter())
 
-	// HTTP control server - uses forwarders[0] for stats (aggregated below)
 	codec := proto.NewJSONCodec()
-	srv := NewServer(codec, engine, forwarders[0], *dumpAddr)
+	srv := NewServer(codec, engine, forwarders, *dumpAddr)
 	httpSrv := &http.Server{
 		Addr:    *httpAddr,
 		Handler: srv.Handler(),

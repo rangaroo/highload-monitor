@@ -61,7 +61,7 @@ func (r *RXRing) DetachFilter() error {
 		unix.SO_DETACH_FILTER,
 		0, 0, 0,
 	)
-	if errno != 0 && errno != unix.ENOENT {
+	if errno != 0 && errno != unix.ENOENT && errno != unix.EINVAL {
 		return fmt.Errorf("setsockopt SO_DETACH_FILTER: %w", errno)
 	}
 	return nil

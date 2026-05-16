@@ -11,14 +11,14 @@ import (
 
 // Server exposes the PF control plane over HTTP
 type Server struct {
-	codec     proto.Codec
-	engine    *FilterEngine
-	forwarder *Forwarder
-	dumpAddr  string // host:port of the TCP dump listener
+	codec      proto.Codec
+	engine     *FilterEngine
+	forwarders []*Forwarder
+	dumpAddr   string // host:port of the TCP dump listener
 }
 
-func NewServer(codec proto.Codec, engine *FilterEngine, fwd *Forwarder, dumpAddr string) *Server {
-	return &Server{codec: codec, engine: engine, forwarder: fwd, dumpAddr: dumpAddr}
+func NewServer(codec proto.Codec, engine *FilterEngine, fwds []*Forwarder, dumpAddr string) *Server {
+	return &Server{codec: codec, engine: engine, forwarders: fwds, dumpAddr: dumpAddr}
 }
 
 // Handler returns an http.Handler with all routes registered.
@@ -46,18 +46,26 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	fs := s.forwarder.Stats()
-	kstats, err := s.forwarder.RXStats()
-	if err != nil {
-		http.Error(w, fmt.Sprintf("stats: %v", err), http.StatusInternalServerError)
-		return
+	var rx, tx uint64
+	var drops, freeze uint64
+	for _, f := range s.forwarders {
+		fs := f.Stats()
+		rx += fs.RXPackets
+		tx += fs.TXPackets
+		ks, err := f.RXStats()
+		if err != nil {
+			http.Error(w, fmt.Sprintf("stats: %v", err), http.StatusInternalServerError)
+			return
+		}
+		drops += uint64(ks.Drops)
+		freeze += uint64(ks.FreezeQCount)
 	}
 
 	s.writeJSON(w, proto.StatsResponse{
-		RXPackets:    fs.RXPackets,
-		RXDrops:      uint64(kstats.Drops),
-		TXPackets:    fs.TXPackets,
-		FreezeQCount: uint64(kstats.FreezeQCount),
+		RXPackets:    rx,
+		RXDrops:      drops,
+		TXPackets:    tx,
+		FreezeQCount: freeze,
 	})
 }
 
